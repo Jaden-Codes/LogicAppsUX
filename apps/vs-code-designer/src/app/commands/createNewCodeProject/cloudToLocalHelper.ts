@@ -40,7 +40,6 @@ export function changeAuthTypeToRaw(connections: ConnectionReferenceModel) {
       if (Object.prototype.hasOwnProperty.call(managedApiConnections, connKey)) {
         const authType = managedApiConnections[connKey]['authentication']['type'];
         if (authType === 'ManagedServiceIdentity') {
-          console.log(`Changing type for ${connKey} from ${authType} to Raw`);
           managedApiConnections[connKey]['authentication']['type'] = 'Raw';
           managedApiConnections[connKey]['authentication']['scheme'] = 'Key';
           managedApiConnections[connKey]['authentication']['parameter'] = `@appsetting('${connKey}-connectionKey')`;

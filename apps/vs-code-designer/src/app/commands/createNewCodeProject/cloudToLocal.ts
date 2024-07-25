@@ -28,7 +28,7 @@ import { extractConnectionDetails, changeAuthTypeToRaw } from './cloudToLocalHel
 import { getParametersJson } from '../../utils/codeless/parameter';
 import { writeFormattedJson } from '../../utils/fs';
 import { saveConnectionReferences, getConnectionsJson, getConnectionsAndSettingsToUpdate } from '../../utils/codeless/connection';
-import { parameterizeConnection } from '../../utils/codeless/parameterizer';
+import { parameterizeConnection, isConnectionsParameterized } from '../../utils/codeless/parameterizer';
 import type {
   ICreateFunctionOptions,
   IFunctionWizardContext,
@@ -40,7 +40,6 @@ import * as path from 'path';
 import AdmZip = require('adm-zip');
 import * as fs from 'fs';
 
-// Constants
 const openFolder = true;
 
 // Function to create an AdmZip instance
@@ -54,12 +53,34 @@ function getZipEntries(zipFilePath: string) {
   return zip.getEntries();
 }
 
-async function getSettings(context: IActionContext, connections: any, workspacePath: any) {
+async function getSettings(context: IActionContext, connections: any, workspacePath: any, localSettingsPath) {
   const tenantId = '';
   const workflowManagementBaseUrl = 'https://management.azure.com/';
   const settingsRecord: Record<string, string> = {};
 
   const connectionReferences = connections.managedApiConnections || {};
+  // Basic implementation to solve if the connections file is already parameterized
+  if (isConnectionsParameterized(connectionReferences) === true) {
+    const localSettingsContent = fs.readFileSync(localSettingsPath, 'utf8');
+    const localSettings = JSON.parse(localSettingsContent);
+    const unParameterizedSettings = [];
+
+    if (localSettings.Values) {
+      const keysToCheck = ['WORKFLOWS_SUBSCRIPTION_ID', 'WORKFLOWS_LOCATION_NAME', 'WORKFLOWS_RESOURCE_GROUP_NAME'];
+
+      keysToCheck.forEach((key) => {
+        if (localSettings.Values[key]) {
+          unParameterizedSettings.push(key);
+        }
+      });
+
+      // Update connectionReferences with unParameterizedSettings
+      unParameterizedSettings.forEach((setting) => {
+        connectionReferences[setting] = localSettings.Values[setting];
+      });
+    }
+  }
+
   const parameters = await getParametersJson(workspacePath);
   const connectionsJson = await getConnectionsJson(workspacePath);
   const connectionsData: ConnectionsData = connectionsJson ? JSON.parse(connectionsJson) : {};
@@ -105,9 +126,10 @@ function cleanLocalSettings(localSettingsPath: string) {
         key === 'FUNCTIONS_RUNTIME_SCALE_MONITORING_ENABLED'
       ) {
         delete localSettings.Values[key];
-      } else if (key === 'AzureWebJobsStorage') {
-        localSettings.Values[key] = 'UseDevelopmentStorage=true';
       }
+      // } else if (key === 'AzureWebJobsStorage') {
+      //   localSettings.Values[key] = 'UseDevelopmentStorage=true';
+      // }
     });
 
     fs.writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2));
@@ -168,6 +190,7 @@ export async function cloudToLocalInternal(
   }
   const zipFilePath = ZipFileStep.zipFilePath;
   const zipEntries = getZipEntries(zipFilePath);
+  const skipProjectPath = true;
   const connectionspath = path.join(wizardContext.workspacePath, 'connections.json');
   let zipSettings = {};
   const localSettingsEntry = zipEntries.find((entry) => entry.entryName === 'local.settings.json');
@@ -212,7 +235,6 @@ export async function cloudToLocalInternal(
       console.error('Error writing file:', error);
     }
   }
-  const skipProjectPath = true;
 
   extend(localSettings, zipSettings);
   await mergeAndWriteConnections();
@@ -220,7 +242,7 @@ export async function cloudToLocalInternal(
   const connection = await instance.getConnectionsJsonContent(wizardContext as IFunctionWizardContext);
   fs.writeFileSync(connectionspath, changeAuthTypeToRaw(connection), 'utf-8');
   cleanLocalSettings(localSettingsPath);
-  const connectionsAndSettingsUpdated = await getSettings(context, connection, wizardContext.workspacePath);
+  const connectionsAndSettingsUpdated = await getSettings(context, connection, wizardContext.workspacePath, localSettingsPath);
 
   await saveConnectionReferences(context, wizardContext.workspacePath, connectionsAndSettingsUpdated, skipProjectPath);
 
